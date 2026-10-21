@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
 from backend.service import HazardService
+
+logger = logging.getLogger(__name__)
 
 try:
     from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -37,6 +40,17 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
         app.state.udp_task = asyncio.create_task(
             receive_udp(service, udp_host, udp_port, protocol_ready), name="hazard-udp-listener"
         )
+        app.state.udp_failure = None
+
+        def observe_listener(task):
+            if task.cancelled():
+                return
+            failure = task.exception()
+            if failure is not None:
+                app.state.udp_failure = type(failure).__name__
+                logger.error("UDP listener stopped unexpectedly (%s)", type(failure).__name__)
+
+        app.state.udp_task.add_done_callback(observe_listener)
         done, _ = await asyncio.wait((protocol_ready, app.state.udp_task),
                                       return_when=asyncio.FIRST_COMPLETED)
         if app.state.udp_task in done:
@@ -102,11 +116,13 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
                        "dropped_frames": protocol.queue_dropped,
                        "processing_errors": protocol.processing_errors,
                        "transport_alive": protocol.transport_alive,
+                       "listener_failure": getattr(app.state, "udp_failure", None),
                        "transport_loss": protocol.transport_loss} if protocol else
                       {"status": "unavailable", "received": 0, "rejected_frames": 0,
                        "processed": 0, "queue_depth": 0, "queue_capacity": 0,
                        "dropped_frames": 0, "processing_errors": 0,
-                       "transport_alive": False, "transport_loss": None})
+                       "transport_alive": False, "transport_loss": None,
+                       "listener_failure": getattr(app.state, "udp_failure", None)})
         persistence_health = persistence.health() if persistence else {"status": "disabled"}
         weather_status = ("unknown" if service.weather_available is None else
                           "healthy" if service.weather_available else "degraded")
