@@ -13,6 +13,7 @@ from backend.telemetry.protocol import TelemetryFrame, encode_frame
 
 
 def build_frame(sequence: int, rng: random.Random) -> bytes:
+    """Generate one synthetic sensor frame for demonstration only."""
     frame = TelemetryFrame(
         drone_id=1,
         sequence=sequence % 65536,
@@ -54,6 +55,8 @@ def main():
     out_of_order_transmissions = 0
     previous_sequence = None
     start = time.monotonic()
+
+    print("DATA: synthetic drone telemetry for demonstration only.")
 
     try:
         # Send the first frame as a stream-start anchor. The receiver needs

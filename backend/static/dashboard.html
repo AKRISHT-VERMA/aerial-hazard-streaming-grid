@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Aerial Hazard Streaming Grid</title>
+  <style>
+    :root { color-scheme: dark; font: 15px/1.5 system-ui, sans-serif; background: #0b1220; color: #e5edf8; }
+    body { margin: 0 auto; padding: 2rem; max-width: 1100px; }
+    h1 { margin-bottom: .25rem; } .muted { color: #9aabc2; }
+    .notice { background: #4c3410; color: #ffe4a3; padding: .75rem 1rem; border-radius: .5rem; }
+    .status { display: flex; gap: 1rem; margin: 1rem 0; }
+    .pill { border: 1px solid #30415c; border-radius: 2rem; padding: .2rem .7rem; }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0 2rem; }
+    th, td { border-bottom: 1px solid #26354b; padding: .6rem; text-align: left; }
+    th { color: #a9bdd9; } .critical { color: #ff7d73; } .warning { color: #ffc66d; }
+    .stale { opacity: .55; } button { cursor: pointer; padding: .4rem .65rem; }
+    .empty { color: #9aabc2; padding: 1rem 0; }
+    .map { display: grid; gap: 3px; overflow-x: auto; padding: .5rem 0 1.5rem; }
+    .grid-cell { min-width: 56px; min-height: 48px; display: grid; place-items: center; border-radius: .35rem; background: #1d6d58; font-weight: 700; }
+    .grid-cell.warning { background: #8a5c14; color: #fff1cf; }
+    .grid-cell.critical { background: #9a302d; color: #ffe2df; }
+    .grid-cell.stale { opacity: .45; outline: 1px dashed #c3d0e2; }
+    .grid-cell.empty { background: #121d2d; color: #66768c; font-weight: 400; }
+  </style>
+</head>
+<body>
+  <h1>Aerial Hazard Streaming Grid</h1>
+  <p class="muted">Live sensor cells, data freshness, and active alerts.</p>
+  <div id="demo-notice" class="notice" hidden></div>
+  <div class="status"><span id="connection" class="pill">Connecting…</span><span id="revision" class="pill">Revision 0</span></div>
+  <h2>Spatial grid (10 m cells)</h2><div id="map" class="map empty">Waiting for telemetry.</div>
+  <h2>Active alerts</h2><div id="alerts" class="empty">No active alerts.</div>
+  <h2>Live cells</h2><div id="cells" class="empty">Waiting for telemetry.</div>
+  <script>
+    const esc = value => String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    function render(data) {
+      document.querySelector("#revision").textContent = `Revision ${data.revision}`;
+      const notice = document.querySelector("#demo-notice");
+      notice.hidden = false;
+      notice.textContent = data.prediction_notice;
+      const visibleCells = [...data.cells]
+        .sort((a, b) => (b.last_updated || 0) - (a.last_updated || 0))
+        .slice(0, 1000);
+      const cells = visibleCells.map(cell => {
+        const key = cell.cell_id.join(","); const score = data.predictions[key];
+        const risk = score ? `${Math.round(score.risk * 100)}% ${esc(score.risk_label)}` : "Not scored";
+        const input = score?.synthetic_input ? "SYNTHETIC INPUT" : "Live input";
+        const weather = score?.weather?.synthetic ? `SYNTHETIC: ${esc(score.weather.source)}` : esc(score?.weather?.source || "—");
+        const prediction = score?.synthetic_prediction ? `SYNTHETIC DEMO: ${esc(score.prediction_source)}` : esc(score?.prediction_source || "—");
+        return `<tr class="${cell.stale ? "stale" : ""}"><td>${esc(key)}</td><td>${Number(cell.latitude).toFixed(6)}, ${Number(cell.longitude).toFixed(6)}</td><td>${cell.stale ? "STALE" : "Current"}</td><td>${risk}</td><td>${cell.readings.length}</td><td>${input}</td><td>${weather}</td><td>${prediction}</td></tr>`;
+      }).join("");
+      const map = document.querySelector("#map");
+      if (data.cells.length) {
+        const xs = visibleCells.map(cell => cell.cell_id[0]);
+        const ys = visibleCells.map(cell => cell.cell_id[1]);
+        const minX = Math.min(...xs), maxX = Math.max(...xs);
+        const minY = Math.min(...ys), maxY = Math.max(...ys);
+        const spanX = maxX - minX + 1, spanY = maxY - minY + 1;
+        const columns = Math.min(40, spanX), rows = Math.min(40, spanY);
+        const bins = new Map();
+        for (const cell of visibleCells) {
+          const column = Math.min(columns - 1, Math.floor((cell.cell_id[0] - minX) / spanX * columns));
+          const row = Math.min(rows - 1, Math.floor((cell.cell_id[1] - minY) / spanY * rows));
+          const key = `${column},${row}`;
+          if (!bins.has(key)) bins.set(key, []);
+          bins.get(key).push(cell);
+        }
+        map.style.gridTemplateColumns = `repeat(${columns}, minmax(56px, 1fr))`;
+        map.classList.remove("empty");
+        const tiles = [];
+        for (let row = rows - 1; row >= 0; row--) for (let column = 0; column < columns; column++) {
+          const group = bins.get(`${column},${row}`) || [];
+          if (!group.length) { tiles.push(`<div class="grid-cell empty" aria-label="No reading">·</div>`); continue; }
+          const scores = group.map(cell => data.predictions[cell.cell_id.join(",")]).filter(Boolean);
+          const score = scores.sort((a, b) => b.risk - a.risk)[0];
+          const risk = score ? Math.round(score.risk * 100) : null;
+          const severity = risk !== null && risk >= 85 ? "critical" : risk !== null && risk >= 65 ? "warning" : "";
+          const stale = group.every(cell => cell.stale);
+          const freshness = stale ? "stale" : "";
+          const coordinates = group.map(cell => cell.cell_id.join(",")).join("; ");
+          const label = `${coordinates}: ${risk === null ? "not scored" : `highest risk ${risk}%`}, ${stale ? "stale" : "current"}`;
+          const marker = group.length > 1 ? `${group.length} cells` : (risk === null ? "—" : `${risk}%`);
+          tiles.push(`<div class="grid-cell ${severity} ${freshness}" title="${esc(label)}" aria-label="${esc(label)}">${marker}</div>`);
+        }
+        map.innerHTML = tiles.join("");
+      } else {
+        map.style.gridTemplateColumns = "";
+        map.classList.add("empty");
+        map.textContent = "Waiting for telemetry.";
+      }
+      const moreCells = data.cells.length > visibleCells.length ? `<p class="muted">Showing the newest ${visibleCells.length} of ${data.cells.length} cells.</p>` : "";
+      document.querySelector("#cells").innerHTML = cells ? `${moreCells}<table><thead><tr><th>Cell</th><th>Center</th><th>Freshness</th><th>Risk</th><th>Readings</th><th>Input</th><th>Weather</th><th>Score source</th></tr></thead><tbody>${cells}</tbody></table>` : "<p class='empty'>Waiting for telemetry.</p>";
+      const alerts = data.alerts.map(alert => `<tr><td class="${esc(alert.severity)}">${esc(alert.severity.toUpperCase())}</td><td>${esc(alert.cell_id.join(","))}</td><td>${Math.round(alert.risk * 100)}%</td><td>${alert.synthetic ? "SYNTHETIC DEMO" : esc(alert.prediction_source)}</td><td>${esc(alert.acknowledged_by || "Unacknowledged")}</td><td>${alert.acknowledged_by ? "" : `<button data-alert="${esc(alert.alert_id)}">Acknowledge</button>`}</td></tr>`).join("");
+      document.querySelector("#alerts").innerHTML = alerts ? `<table><thead><tr><th>Severity</th><th>Cell</th><th>Risk</th><th>Score source</th><th>Status</th><th></th></tr></thead><tbody>${alerts}</tbody></table>` : "<p class='empty'>No active alerts.</p>";
+      document.querySelectorAll("button[data-alert]").forEach(button => button.onclick = async () => {
+        const user = prompt("Name for the alert acknowledgement:"); if (!user) return;
+        const response = await fetch(`/api/alerts/${encodeURIComponent(button.dataset.alert)}/acknowledge`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({user})});
+        if (!response.ok) alert("Acknowledgement failed. Check the alert and try again.");
+      });
+    }
+    function connect() {
+      const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${scheme}//${location.host}/ws`);
+      socket.onopen = () => document.querySelector("#connection").textContent = "Live";
+      socket.onmessage = event => render(JSON.parse(event.data));
+      socket.onclose = () => { document.querySelector("#connection").textContent = "Reconnecting…"; setTimeout(connect, 1500); };
+      socket.onerror = () => socket.close();
+    }
+    connect();
+  </script>
+</body>
+</html>
+
