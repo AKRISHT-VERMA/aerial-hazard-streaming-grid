@@ -95,6 +95,32 @@ class TestLiveAPI(unittest.TestCase):
             with TestClient(create_app(self.make_service(), udp_port=65536, database_url="")):
                 pass
 
+    def test_unexpected_udp_transport_loss_marks_health_unavailable_and_shuts_down(self):
+        import time
+        from fastapi.testclient import TestClient
+
+        app = create_app(self.make_service(), udp_port=0, database_url="")
+        with TestClient(app) as client:
+            protocol = app.state.udp_protocol
+            loop = app.state.udp_task.get_loop()
+            loop.call_soon_threadsafe(protocol.transport.close)
+
+            deadline = time.monotonic() + 3
+            response = None
+            while time.monotonic() < deadline:
+                response = client.get("/health")
+                if response.status_code == 503:
+                    break
+                time.sleep(0.02)
+
+            self.assertIsNotNone(response)
+            self.assertEqual(response.status_code, 503)
+            self.assertFalse(protocol.transport_alive)
+            self.assertEqual(response.json()["udp"]["status"], "unavailable")
+            self.assertEqual(response.json()["udp"]["transport_loss"], "closed")
+            self.assertTrue(app.state.udp_task.done())
+
 
 if __name__ == "__main__":
     unittest.main()
+
