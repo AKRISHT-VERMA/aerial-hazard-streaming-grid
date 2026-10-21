@@ -33,12 +33,12 @@
 
 ## Bounded state and UDP lifecycle
 
-The default live grid is limited to 10,000 cells, five minutes of cell and
-reading retention, and 256 drone IDs per cell. Expired/stale cells without an
+The default live grid is limited to 1,000 cells, five minutes of cell and
+reading retention, and 32 drone IDs per cell. Expired/stale cells without an
 active alert are evicted oldest-first. Alerted cells remain pinned; when no
 safe cell is available, the new frame is rejected and `/health` reports the
 dropped-update counter. Prediction history is limited to the configured entry
-count (10,000 by default) and retention (five minutes); entries tied to active
+count (1,000 by default) and retention (five minutes); entries tied to active
 alerts are protected from expiry. The Open-Meteo cache has a 60-second TTL and
 a 1,024-entry LRU bound. `/health` exposes capacities, evictions, and drops.
 Environment overrides and defaults are listed in the README and `.env.example`.
