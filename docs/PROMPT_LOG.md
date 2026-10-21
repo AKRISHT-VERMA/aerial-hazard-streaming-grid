@@ -111,14 +111,24 @@ Local validation:
 - `python -m pip check`: no broken requirements found.
 - `asyncpg` and `playwright` module checks: not installed.
 - No local `docker` or `psql` executable was available; no real PostgreSQL or
-  browser result is claimed locally. CI is configured to run both.
+  browser result is claimed locally.
 
-Remaining verification:
-The first GitHub Actions run confirmed PostgreSQL schema/write/duplicate/
-acknowledgement/shutdown integration passed, while Chromium exposed that the
-runtime requirements did not include Uvicorn's WebSocket implementation. The
-runtime dependency is now declared; the next CI run must confirm the browser
-smoke path. No production readiness or safety certification is claimed.
+GitHub Actions verification:
+- Run `39643882677` on commit `29551a158d3a7f463bb028b62108e028ecabfe17`:
+  success on Python 3.11 with PostgreSQL 16 and headless Chromium.
+- `python -m compileall -q .`: passed.
+- `python -m pip check`: passed (`No broken requirements found`).
+- `python -m unittest discover -v`: all 59 tests passed, no skips. The real
+  PostgreSQL schema/idempotency/acknowledgement/queue-drain test and browser
+  smoke test both passed.
+- Two earlier CI attempts failed in the browser smoke step. They exposed a
+  missing Uvicorn WebSocket runtime dependency; after declaring `websockets`
+  and synchronizing on the live WebSocket, the final run passed.
+
+Remaining limitations:
+Live Open-Meteo, a trained model artifact, safety performance, and production
+deployment are still unverified. No production readiness or safety
+certification is claimed.
 
 ## P02 - Complete the streaming pipeline
 
