@@ -118,6 +118,7 @@ class TestLiveAPI(unittest.TestCase):
             self.assertFalse(protocol.transport_alive)
             self.assertEqual(response.json()["udp"]["status"], "unavailable")
             self.assertEqual(response.json()["udp"]["transport_loss"], "closed")
+            self.assertEqual(response.json()["udp"]["listener_failure"], "UDPTransportLost")
             self.assertTrue(app.state.udp_task.done())
 
 
