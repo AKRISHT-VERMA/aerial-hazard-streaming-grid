@@ -37,10 +37,22 @@ def main() -> None:
     model_path = os.getenv("HAZARD_MODEL_PATH")
     model = SVMRiskModel(model_path) if model_path else DemoThresholdModel()
     weather = (DemoWeatherProvider() if os.getenv("HAZARD_WEATHER_SOURCE") == "demo"
-               else OpenMeteoWeatherProvider())
+               else OpenMeteoWeatherProvider(
+                   cache_seconds=float(os.getenv("HAZARD_WEATHER_CACHE_SECONDS", "60")),
+                   cache_max_entries=int(os.getenv("HAZARD_WEATHER_CACHE_MAX_ENTRIES", "1024")),
+               ))
+    grid_max_cells = int(os.getenv("HAZARD_GRID_MAX_CELLS", "10000"))
+    grid = StreamingHazardGrid(
+        18.5204, 73.8567,
+        max_cells=grid_max_cells,
+        cell_retention_seconds=float(os.getenv("HAZARD_CELL_RETENTION_SECONDS", "300")),
+        max_drones_per_cell=int(os.getenv("HAZARD_GRID_MAX_DRONES_PER_CELL", "256")),
+    )
     service = HazardService(
-        StreamingHazardGrid(18.5204, 73.8567), model=model, weather=weather,
+        grid, model=model, weather=weather,
         synthetic_input=os.getenv("HAZARD_TELEMETRY_SOURCE") == "demo",
+        prediction_retention_seconds=float(os.getenv("HAZARD_PREDICTION_RETENTION_SECONDS", "300")),
+        prediction_capacity=int(os.getenv("HAZARD_PREDICTION_MAX_ENTRIES", str(grid_max_cells))),
     )
     try:
         import uvicorn
@@ -52,3 +64,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
