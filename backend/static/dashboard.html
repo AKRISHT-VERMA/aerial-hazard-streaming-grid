@@ -39,7 +39,10 @@
       const notice = document.querySelector("#demo-notice");
       notice.hidden = false;
       notice.textContent = data.prediction_notice;
-      const cells = data.cells.map(cell => {
+      const visibleCells = [...data.cells]
+        .sort((a, b) => (b.last_updated || 0) - (a.last_updated || 0))
+        .slice(0, 1000);
+      const cells = visibleCells.map(cell => {
         const key = cell.cell_id.join(","); const score = data.predictions[key];
         const risk = score ? `${Math.round(score.risk * 100)}% ${esc(score.risk_label)}` : "Not scored";
         const input = score?.synthetic_input ? "SYNTHETIC INPUT" : "Live input";
@@ -49,24 +52,36 @@
       }).join("");
       const map = document.querySelector("#map");
       if (data.cells.length) {
-        const xs = data.cells.map(cell => cell.cell_id[0]);
-        const ys = data.cells.map(cell => cell.cell_id[1]);
+        const xs = visibleCells.map(cell => cell.cell_id[0]);
+        const ys = visibleCells.map(cell => cell.cell_id[1]);
         const minX = Math.min(...xs), maxX = Math.max(...xs);
         const minY = Math.min(...ys), maxY = Math.max(...ys);
-        const columns = maxX - minX + 1, rows = maxY - minY + 1;
-        const byId = new Map(data.cells.map(cell => [cell.cell_id.join(","), cell]));
+        const spanX = maxX - minX + 1, spanY = maxY - minY + 1;
+        const columns = Math.min(40, spanX), rows = Math.min(40, spanY);
+        const bins = new Map();
+        for (const cell of visibleCells) {
+          const column = Math.min(columns - 1, Math.floor((cell.cell_id[0] - minX) / spanX * columns));
+          const row = Math.min(rows - 1, Math.floor((cell.cell_id[1] - minY) / spanY * rows));
+          const key = `${column},${row}`;
+          if (!bins.has(key)) bins.set(key, []);
+          bins.get(key).push(cell);
+        }
         map.style.gridTemplateColumns = `repeat(${columns}, minmax(56px, 1fr))`;
         map.classList.remove("empty");
         const tiles = [];
-        for (let y = maxY; y >= minY; y--) for (let x = minX; x <= maxX; x++) {
-          const cell = byId.get(`${x},${y}`);
-          if (!cell) { tiles.push(`<div class="grid-cell empty" aria-label="No reading">·</div>`); continue; }
-          const score = data.predictions[`${x},${y}`];
+        for (let row = rows - 1; row >= 0; row--) for (let column = 0; column < columns; column++) {
+          const group = bins.get(`${column},${row}`) || [];
+          if (!group.length) { tiles.push(`<div class="grid-cell empty" aria-label="No reading">·</div>`); continue; }
+          const scores = group.map(cell => data.predictions[cell.cell_id.join(",")]).filter(Boolean);
+          const score = scores.sort((a, b) => b.risk - a.risk)[0];
           const risk = score ? Math.round(score.risk * 100) : null;
           const severity = risk !== null && risk >= 85 ? "critical" : risk !== null && risk >= 65 ? "warning" : "";
-          const freshness = cell.stale ? "stale" : "";
-          const label = `${x},${y}: ${risk === null ? "not scored" : `risk ${risk}%`}, ${cell.stale ? "stale" : "current"}`;
-          tiles.push(`<div class="grid-cell ${severity} ${freshness}" title="${esc(label)}" aria-label="${esc(label)}">${risk === null ? "—" : `${risk}%`}</div>`);
+          const stale = group.every(cell => cell.stale);
+          const freshness = stale ? "stale" : "";
+          const coordinates = group.map(cell => cell.cell_id.join(",")).join("; ");
+          const label = `${coordinates}: ${risk === null ? "not scored" : `highest risk ${risk}%`}, ${stale ? "stale" : "current"}`;
+          const marker = group.length > 1 ? `${group.length} cells` : (risk === null ? "—" : `${risk}%`);
+          tiles.push(`<div class="grid-cell ${severity} ${freshness}" title="${esc(label)}" aria-label="${esc(label)}">${marker}</div>`);
         }
         map.innerHTML = tiles.join("");
       } else {
@@ -74,7 +89,8 @@
         map.classList.add("empty");
         map.textContent = "Waiting for telemetry.";
       }
-      document.querySelector("#cells").innerHTML = cells ? `<table><thead><tr><th>Cell</th><th>Center</th><th>Freshness</th><th>Risk</th><th>Readings</th><th>Input</th><th>Weather</th><th>Score source</th></tr></thead><tbody>${cells}</tbody></table>` : "<p class='empty'>Waiting for telemetry.</p>";
+      const moreCells = data.cells.length > visibleCells.length ? `<p class="muted">Showing the newest ${visibleCells.length} of ${data.cells.length} cells.</p>` : "";
+      document.querySelector("#cells").innerHTML = cells ? `${moreCells}<table><thead><tr><th>Cell</th><th>Center</th><th>Freshness</th><th>Risk</th><th>Readings</th><th>Input</th><th>Weather</th><th>Score source</th></tr></thead><tbody>${cells}</tbody></table>` : "<p class='empty'>Waiting for telemetry.</p>";
       const alerts = data.alerts.map(alert => `<tr><td class="${esc(alert.severity)}">${esc(alert.severity.toUpperCase())}</td><td>${esc(alert.cell_id.join(","))}</td><td>${Math.round(alert.risk * 100)}%</td><td>${alert.synthetic ? "SYNTHETIC DEMO" : esc(alert.prediction_source)}</td><td>${esc(alert.acknowledged_by || "Unacknowledged")}</td><td>${alert.acknowledged_by ? "" : `<button data-alert="${esc(alert.alert_id)}">Acknowledge</button>`}</td></tr>`).join("");
       document.querySelector("#alerts").innerHTML = alerts ? `<table><thead><tr><th>Severity</th><th>Cell</th><th>Risk</th><th>Score source</th><th>Status</th><th></th></tr></thead><tbody>${alerts}</tbody></table>` : "<p class='empty'>No active alerts.</p>";
       document.querySelectorAll("button[data-alert]").forEach(button => button.onclick = async () => {
@@ -95,3 +111,4 @@
   </script>
 </body>
 </html>
+
