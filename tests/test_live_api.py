@@ -38,6 +38,12 @@ class TestLiveAPI(unittest.TestCase):
             self.assertIn("prediction_notice", state)
             self.assertEqual(state["alerts"][0]["acknowledged_by"], "operator")
 
+    def test_invalid_udp_port_fails_application_startup(self):
+        from fastapi.testclient import TestClient
+        with self.assertRaises(ValueError):
+            with TestClient(create_app(self.make_service(), udp_port=65536, database_url="")):
+                pass
+
 
 if __name__ == "__main__":
     unittest.main()

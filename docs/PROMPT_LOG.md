@@ -66,7 +66,7 @@ document finite retry behavior and unauthenticated UDP; add integration and
 failure-path tests.
 
 Validation:
-- `python -m unittest discover -v`: 54 tests passed after audit changes.
+- `python -m unittest discover -v`: 55 tests passed after audit changes.
 - `python -m compileall -q .`: passed.
 - `python scripts/run_server.py --help`: passed.
 - `python scripts/run_server.py --host 0.0.0.0 --port 8000`: rejected as
