@@ -31,8 +31,17 @@ def main():
             try:
                 data, address = sock.recvfrom(2048)
             except socket.timeout:
-                # The next stage will add a proper periodic timeout flush.
-                continue
+                for ready in reorder.flush_expired():
+                    processed += 1
+                    print(
+                        f"Processed={processed} "
+                        f"Drone={ready.drone_id} "
+                        f"Seq={ready.sequence} "
+                        f"Lat={ready.latitude:.6f} "
+                        f"Lon={ready.longitude:.6f} "
+                        f"Sensors={ready.sensors}"
+                    )
+                continue    
 
             received_at = time.monotonic()
 

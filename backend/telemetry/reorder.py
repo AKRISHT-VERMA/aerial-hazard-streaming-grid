@@ -97,3 +97,42 @@ class ReorderBuffer:
             }
 
         return ready
+
+
+
+    def flush_expired(
+        self,
+        now: float | None = None,
+    ) -> list[TelemetryFrame]:
+        """Release buffered frames once their reorder window expires."""
+        if now is None:
+            now = time.monotonic()
+
+        ready: list[TelemetryFrame] = []
+
+        for drone, pending in self.pending.items():
+            expected = self.expected_sequence[drone]
+
+            while pending:
+                oldest_arrival = min(
+                    arrival for arrival, _ in pending.values()
+                )
+
+                if now - oldest_arrival < self.window_seconds:
+                    break
+
+                nearest = min(
+                    pending,
+                    key=lambda seq: self._distance(seq, expected),
+                )
+
+                expected = nearest
+
+                while expected in pending:
+                    _, frame = pending.pop(expected)
+                    ready.append(frame)
+                    expected = (expected + 1) & 0xFFFF
+
+            self.expected_sequence[drone] = expected
+
+        return ready

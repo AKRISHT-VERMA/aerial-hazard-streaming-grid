@@ -70,6 +70,20 @@ class TestReorderBuffer(unittest.TestCase):
         self.assertEqual(buffer.push(frame(19), now=0.1), [])
         self.assertEqual(buffer.late_frames, 1)
 
+    
+    def test_flush_expired_releases_buffered_frames(self):
+        buffer = ReorderBuffer(window_seconds=2.0)
+
+        buffer.push(frame(10), now=0)
+        buffer.push(frame(12), now=0.1)
+
+        # Before expiry, the missing sequence keeps frame 12 buffered.
+        self.assertEqual(buffer.flush_expired(now=1.9), [])
+
+        # Once the two-second window expires, frame 12 is released.
+        result = buffer.flush_expired(now=2.2)
+        self.assertEqual([f.sequence for f in result], [12])
+
 
 if __name__ == "__main__":
     unittest.main()
