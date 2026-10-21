@@ -95,5 +95,11 @@ class AlertManager:
         with self._lock:
             return [self._alerts[key].to_dict() for key in sorted(self._alerts)]
 
+    def active_cell_ids(self) -> set[tuple[int, int]]:
+        """Cells whose live grid state must be retained while alerts are active."""
+        with self._lock:
+            return set(self._alerts)
+
     def _severity(self, risk: float) -> str:
         return "critical" if risk >= self.escalation_at else "warning"
+
