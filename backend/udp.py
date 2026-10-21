@@ -13,6 +13,10 @@ from backend.telemetry.reorder import ReorderBuffer
 logger = logging.getLogger(__name__)
 
 
+class UDPTransportLost(RuntimeError):
+    """Raised when the UDP listener closes outside its requested shutdown."""
+
+
 class HazardDatagramProtocol(asyncio.DatagramProtocol):
     def __init__(self, service: HazardService, loop: asyncio.AbstractEventLoop,
                  reorder_window_seconds: float = 2.0,
@@ -31,9 +35,14 @@ class HazardDatagramProtocol(asyncio.DatagramProtocol):
         self.queue_dropped = 0
         self.processing_errors = 0
         self._worker: asyncio.Task | None = None
+        self.transport_alive = False
+        self.shutting_down = False
+        self.transport_loss: str | None = None
+        self._closed = loop.create_future()
 
     def connection_made(self, transport) -> None:
         self.transport = transport
+        self.transport_alive = True
         self._worker = self.loop.create_task(self._run(), name="hazard-frame-worker")
         self._schedule_flush()
 
@@ -51,15 +60,32 @@ class HazardDatagramProtocol(asyncio.DatagramProtocol):
         logger.warning("UDP socket reported an error: %s", type(exc).__name__)
 
     def connection_lost(self, exc) -> None:
+        self.transport_alive = False
+        self.transport_loss = type(exc).__name__ if exc is not None else "closed"
         if self._flush_handle is not None:
             self._flush_handle.cancel()
+            self._flush_handle = None
+        if not self._closed.done():
+            self._closed.set_result(exc)
 
     def _schedule_flush(self) -> None:
-        self._flush_handle = self.loop.call_later(0.1, self._flush)
+        if self.transport_alive and not self.shutting_down:
+            self._flush_handle = self.loop.call_later(0.1, self._flush)
 
     def _flush(self) -> None:
+        if not self.transport_alive or self.shutting_down:
+            return
         self._process(self.reorder.flush_expired())
         self._schedule_flush()
+
+    def begin_shutdown(self) -> None:
+        self.shutting_down = True
+        if self._flush_handle is not None:
+            self._flush_handle.cancel()
+            self._flush_handle = None
+
+    async def wait_closed(self):
+        return await self._closed
 
     def _process(self, frames) -> None:
         for frame in frames:
@@ -81,8 +107,9 @@ class HazardDatagramProtocol(asyncio.DatagramProtocol):
 
     async def _process_one(self, frame) -> None:
         try:
-            await self.service.process_frame(frame)
-            self.processed += 1
+            result = await self.service.process_frame(frame)
+            if result is not None:
+                self.processed += 1
         except Exception:
             self.processing_errors += 1
             logger.exception("Failed to process a valid telemetry frame")
@@ -107,7 +134,13 @@ async def receive_udp(service: HazardService, host: str = "127.0.0.1",
     if protocol_ready is not None and not protocol_ready.done():
         protocol_ready.set_result(protocol)
     try:
-        await asyncio.Future()
+        await protocol.wait_closed()
+        if not protocol.shutting_down:
+            raise UDPTransportLost(
+                f"UDP transport closed unexpectedly ({protocol.transport_loss})"
+            )
     finally:
+        protocol.begin_shutdown()
         transport.close()
         await protocol.drain()
+
