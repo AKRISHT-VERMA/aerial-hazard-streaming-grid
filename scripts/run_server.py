@@ -41,12 +41,12 @@ def main() -> None:
                    cache_seconds=float(os.getenv("HAZARD_WEATHER_CACHE_SECONDS", "60")),
                    cache_max_entries=int(os.getenv("HAZARD_WEATHER_CACHE_MAX_ENTRIES", "1024")),
                ))
-    grid_max_cells = int(os.getenv("HAZARD_GRID_MAX_CELLS", "10000"))
+    grid_max_cells = int(os.getenv("HAZARD_GRID_MAX_CELLS", "1000"))
     grid = StreamingHazardGrid(
         18.5204, 73.8567,
         max_cells=grid_max_cells,
         cell_retention_seconds=float(os.getenv("HAZARD_CELL_RETENTION_SECONDS", "300")),
-        max_drones_per_cell=int(os.getenv("HAZARD_GRID_MAX_DRONES_PER_CELL", "256")),
+        max_drones_per_cell=int(os.getenv("HAZARD_GRID_MAX_DRONES_PER_CELL", "32")),
     )
     service = HazardService(
         grid, model=model, weather=weather,
