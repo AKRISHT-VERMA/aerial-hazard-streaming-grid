@@ -85,7 +85,10 @@ is retrying; retry limits bound that delay.
 
 ## Endpoints
 
-- `GET /health`: service status and live-state revision.
+- `GET /health`: overall `healthy`, `degraded`, or `unavailable` status plus
+  component details. Intentionally disabled PostgreSQL reports `disabled` and
+  does not make an otherwise healthy demo degraded. UDP drops/errors, weather
+  outages, queue saturation, and abandoned database batches are reported.
 - `GET /api/cells`: current in-memory cells, readings, confidence and stale flags.
 - `GET /api/alerts`: active alerts.
 - `POST /api/alerts/{alert_id}/acknowledge`: acknowledge an alert with
@@ -134,7 +137,13 @@ The tests cover the wire protocol, sequence reordering, grid aggregation and
 staleness, feature validation, alert transitions, bounded queue behavior,
 writer shutdown after a database outage, and loopback UDP-to-live-state
 integration. PostgreSQL service integration and browser rendering checks
-require their optional runtime dependencies and services. The server uses
+are skipped locally unless configured. Run the PostgreSQL integration test
+with `requirements-postgres.txt` and `TEST_DATABASE_URL` pointing to a
+disposable database. Run the browser smoke test with
+`requirements-browser-test.txt`, Chromium installed using
+`python -m playwright install chromium`, and `RUN_BROWSER_TESTS=1`. GitHub
+Actions runs both checks with a PostgreSQL 16 service and headless Chromium.
+The server uses
 `requirements.txt`; test-only HTTP client dependencies are in
 `requirements-test.txt`. Optional SVM and PostgreSQL dependencies are listed
 separately in `requirements-model.txt` and `requirements-postgres.txt`.

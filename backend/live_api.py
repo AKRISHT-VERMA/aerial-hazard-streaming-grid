@@ -26,7 +26,6 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
         app.state.udp_protocol = None
         app.state.freshness_task = None
         app.state.persistence = None
-        app.state.udp_protocol = None
         dsn = database_url if database_url is not None else os.environ.get("DATABASE_URL")
         if dsn:
             from backend.persistence import AsyncPostgresStore
@@ -87,19 +86,44 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
 
     @app.get("/health")
     async def health():
+        from fastapi.responses import JSONResponse
+
         udp_task = getattr(app.state, "udp_task", None)
         protocol = getattr(app.state, "udp_protocol", None) if udp_task else None
         persistence = getattr(app.state, "persistence", None)
-        persistence_health = persistence.health() if persistence else None
-        return {"status": "ok", "revision": service.revision,
-                "synthetic_input": service.synthetic_input,
-                "synthetic_prediction": getattr(service.model, "source", "unknown").startswith("synthetic"),
-                "udp": ({"received": protocol.received, "rejected": protocol.rejected,
-                         "processed": protocol.processed, "queue_depth": protocol.processing_queue.qsize(),
-                         "queue_capacity": protocol.processing_queue.maxsize,
-                         "queue_dropped": protocol.queue_dropped,
-                         "processing_errors": protocol.processing_errors} if protocol else None),
-                "persistence": persistence_health}
+        udp_running = protocol is not None and udp_task is not None and not udp_task.done()
+        udp_status = "unavailable" if not udp_running else (
+            "degraded" if protocol.queue_dropped or protocol.processing_errors else "healthy"
+        )
+        udp_health = ({"status": udp_status, "received": protocol.received,
+                       "rejected_frames": protocol.rejected, "processed": protocol.processed,
+                       "queue_depth": protocol.processing_queue.qsize(),
+                       "queue_capacity": protocol.processing_queue.maxsize,
+                       "dropped_frames": protocol.queue_dropped,
+                       "processing_errors": protocol.processing_errors} if protocol else
+                      {"status": "unavailable", "received": 0, "rejected_frames": 0,
+                       "processed": 0, "queue_depth": 0, "queue_capacity": 0,
+                       "dropped_frames": 0, "processing_errors": 0})
+        persistence_health = persistence.health() if persistence else {"status": "disabled"}
+        weather_status = ("unknown" if service.weather_available is None else
+                          "healthy" if service.weather_available else "degraded")
+        component_statuses = [udp_status]
+        if persistence_health["status"] != "disabled":
+            component_statuses.append(persistence_health["status"])
+        if weather_status in {"healthy", "degraded", "unavailable"}:
+            component_statuses.append(weather_status)
+        overall = ("unavailable" if "unavailable" in component_statuses else
+                   "degraded" if "degraded" in component_statuses else "healthy")
+        payload = {
+            "status": overall,
+            "revision": service.revision,
+            "synthetic_input": service.synthetic_input,
+            "synthetic_prediction": getattr(service.model, "source", "unknown").startswith("synthetic"),
+            "udp": udp_health,
+            "persistence": persistence_health,
+            "weather": {"status": weather_status, "failures": service.weather_failures},
+        }
+        return JSONResponse(status_code=503 if overall == "unavailable" else 200, content=payload)
 
     @app.get("/", include_in_schema=False)
     async def dashboard():

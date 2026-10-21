@@ -47,6 +47,9 @@ class TestPostgresWriter(unittest.IsolatedAsyncioTestCase):
         store.enqueue_reading(frame, {"cell_id": [0, 0]})
         with self.assertRaises(PersistenceQueueFull):
             store.enqueue_reading(frame, {"cell_id": [0, 0]})
+        health = store.health()
+        self.assertEqual(health["queue_saturations"], 1)
+        self.assertEqual(health["status"], "degraded")
 
     async def test_permanent_database_failure_is_bounded_and_shutdown_completes(self):
         pool = FakePool(failures=10)
@@ -62,6 +65,7 @@ class TestPostgresWriter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.failed_batches, 1)
         self.assertEqual(store.failed_readings, 1)
         self.assertEqual(store.last_error, "OSError")
+        self.assertEqual(store.health()["status"], "degraded")
 
 
 if __name__ == "__main__":

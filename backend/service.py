@@ -34,6 +34,8 @@ class HazardService:
         self._subscribers: set[asyncio.Queue] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._processing_lock = asyncio.Lock()
+        self.weather_failures = 0
+        self.weather_available: bool | None = None
 
     async def process_frame(self, frame) -> dict[str, Any]:
         # Keep frames serialized so slow weather responses cannot reorder model
@@ -47,8 +49,11 @@ class HazardService:
                 weather_values = (weather.temperature, weather.wind_speed,
                                   weather.wind_direction)
                 weather_payload = asdict(weather)
+                self.weather_available = True
             except Exception as exc:
                 logger.warning("Weather lookup unavailable (%s)", type(exc).__name__)
+                self.weather_failures += 1
+                self.weather_available = False
                 weather_values = (None, None, None)
                 weather_payload = {
                     "temperature": None, "wind_speed": None,

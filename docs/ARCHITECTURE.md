@@ -26,8 +26,10 @@
    than blocking shutdown forever. Acknowledgements are written synchronously
    before the API confirms them.
 9. `backend.live_api` serves a loopback dashboard, JSON cell/alert endpoints,
-   health status and full-state WebSocket updates. Live map reads use only
-   in-memory grid state.
+   component health and full-state WebSocket updates. Live map reads use only
+   in-memory grid state. Health treats intentionally disabled persistence as
+   disabled, reports UDP drops/errors and weather outages as degradation, and
+   marks exhausted or unavailable persistence accordingly.
 
 ## Feature schema
 
@@ -56,6 +58,8 @@ wire protocol, and grid API that are present here.
 
 - Use Python 3.10+ and `python -m unittest discover -v`.
 - FastAPI/Uvicorn, asyncpg and scikit-learn/joblib are optional dependencies.
+- `.github/workflows/ci.yml` runs unit and loopback integration checks, a real
+  PostgreSQL 16 integration test, and a headless Chromium dashboard smoke test.
 - Use a trusted model artifact only; loading joblib can execute code.
 - The default scorer and simulator data are clearly marked synthetic. The
   repository is not safety-validated for industrial use.

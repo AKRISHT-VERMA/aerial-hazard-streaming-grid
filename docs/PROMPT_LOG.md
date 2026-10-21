@@ -83,6 +83,41 @@ be firewalled to trusted sources. HTTP has no app authentication; remote use
 requires an authenticated TLS gateway. No production safety certification is
 claimed.
 
+## P04 - Release-readiness verification
+
+Objective:
+Add branch/PR CI with PostgreSQL and browser integration, strengthen health
+states, and record only checks that actually ran.
+
+Prompt:
+Continue work on the existing draft PR #1. Add GitHub Actions checks for unit
+tests, compileall and pip check; use a real temporary PostgreSQL service for
+schema, duplicate, acknowledgement and shutdown tests; make component health
+accurate for disabled, degraded and unavailable dependencies; add a browser
+smoke check when CI can install a browser; inspect and update docs and keep the
+PR open in draft without merging.
+
+Files changed:
+Added `.github/workflows/ci.yml`, PostgreSQL 16 integration coverage, an
+opt-in Playwright Chromium dashboard smoke test and browser-test requirements.
+Added health component states and counters for UDP, PostgreSQL and weather;
+expanded health transition tests; updated README and architecture guidance.
+
+Local validation:
+- `python -m unittest discover -v`: 59 tests discovered, 57 passed, 2
+  skipped because asyncpg/PostgreSQL and Playwright/Chromium are unavailable
+  in this environment.
+- `python -m compileall -q .`: passed.
+- `python -m pip check`: no broken requirements found.
+- `asyncpg` and `playwright` module checks: not installed.
+- No local `docker` or `psql` executable was available; no real PostgreSQL or
+  browser result is claimed locally. CI is configured to run both.
+
+Remaining verification:
+Wait for the GitHub Actions run on the updated branch to confirm the remote
+PostgreSQL and Chromium checks. No production readiness or safety certification
+is claimed.
+
 ## P02 - Complete the streaming pipeline
 
 Objective:

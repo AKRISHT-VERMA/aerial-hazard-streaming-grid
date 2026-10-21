@@ -30,6 +30,7 @@ class AsyncPostgresStore:
         self.max_retries = max_retries
         self.failed_batches = 0
         self.failed_readings = 0
+        self.queue_saturations = 0
         self.last_error: str | None = None
         self.worker: asyncio.Task | None = None
         self._closed = False
@@ -82,6 +83,7 @@ class AsyncPostgresStore:
         try:
             self.queue.put_nowait((frame, result))
         except asyncio.QueueFull as exc:
+            self.queue_saturations += 1
             raise PersistenceQueueFull("PostgreSQL write queue is full") from exc
 
     async def acknowledge_alert(self, alert) -> None:
@@ -180,6 +182,13 @@ class AsyncPostgresStore:
         await self.pool.close()
 
     def health(self) -> dict[str, int | str | None]:
+        worker_failed = (self.worker is not None and self.worker.done()
+                         and not self.worker.cancelled() and self.worker.exception() is not None)
+        unavailable = worker_failed
+        degraded = self.queue_saturations > 0 or self.failed_batches > 0
         return {"queue_depth": self.queue.qsize(), "queue_capacity": self.queue.maxsize,
                 "failed_batches": self.failed_batches, "failed_readings": self.failed_readings,
+                "queue_saturations": self.queue_saturations,
+                "worker_failed": worker_failed,
+                "status": "unavailable" if unavailable else "degraded" if degraded else "healthy",
                 "last_error": self.last_error}
