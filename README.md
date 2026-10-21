@@ -50,10 +50,10 @@ Settings are environment variables; the runner does not automatically load
 | `HAZARD_HTTP_PORT` | `8000` | Dashboard and API port. |
 | `HAZARD_UDP_HOST` | `127.0.0.1` | UDP telemetry bind address. |
 | `HAZARD_UDP_PORT` | `9999` | UDP telemetry port. |
-| `HAZARD_GRID_MAX_CELLS` | `10000` | Maximum live grid cells. At capacity, oldest stale unalerted cells are evicted first; otherwise a new frame is dropped and counted. |
+| `HAZARD_GRID_MAX_CELLS` | `1000` | Maximum live grid cells. At capacity, oldest stale unalerted cells are evicted first; otherwise a new frame is dropped and counted. |
 | `HAZARD_CELL_RETENTION_SECONDS` | `300` | Retain cells/readings for up to five minutes without newer telemetry; active-alert cells remain pinned. |
-| `HAZARD_GRID_MAX_DRONES_PER_CELL` | `256` | Maximum distinct drone readings retained per cell (protocol maximum is 256). Expired readings are removed first; otherwise updates are dropped and counted. |
-| `HAZARD_PREDICTION_MAX_ENTRIES` | `10000` | Maximum retained predictions; default is the grid capacity. |
+| `HAZARD_GRID_MAX_DRONES_PER_CELL` | `32` | Maximum distinct drone readings retained per cell (protocol maximum is 256). Expired readings are removed first; otherwise updates are dropped and counted. |
+| `HAZARD_PREDICTION_MAX_ENTRIES` | `1000` | Maximum retained predictions; default is the grid capacity. |
 | `HAZARD_PREDICTION_RETENTION_SECONDS` | `300` | Expire predictions after five minutes without a newer score; predictions associated with active alerts are retained. |
 | `HAZARD_WEATHER_CACHE_SECONDS` | `60` | Weather cache entry lifetime. |
 | `HAZARD_WEATHER_CACHE_MAX_ENTRIES` | `1024` | Maximum live weather cache entries; least-recently-used entries are evicted when full. |
