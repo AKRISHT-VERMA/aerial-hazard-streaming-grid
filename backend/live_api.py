@@ -66,11 +66,9 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
         finally:
             task = app.state.udp_task
             if task is not None:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
             freshness = app.state.freshness_task
             if freshness is not None:
                 freshness.cancel()
@@ -80,6 +78,7 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
                     pass
             if app.state.persistence is not None:
                 await app.state.persistence.close()
+                service.persistence = None
 
     app = FastAPI(title="Aerial Hazard Streaming Grid", version="1.0.0",
                   lifespan=lifespan)
@@ -91,7 +90,8 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
         udp_task = getattr(app.state, "udp_task", None)
         protocol = getattr(app.state, "udp_protocol", None) if udp_task else None
         persistence = getattr(app.state, "persistence", None)
-        udp_running = protocol is not None and udp_task is not None and not udp_task.done()
+        udp_running = (protocol is not None and protocol.transport_alive
+                       and udp_task is not None and not udp_task.done())
         udp_status = "unavailable" if not udp_running else (
             "degraded" if protocol.queue_dropped or protocol.processing_errors else "healthy"
         )
@@ -100,10 +100,13 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
                        "queue_depth": protocol.processing_queue.qsize(),
                        "queue_capacity": protocol.processing_queue.maxsize,
                        "dropped_frames": protocol.queue_dropped,
-                       "processing_errors": protocol.processing_errors} if protocol else
+                       "processing_errors": protocol.processing_errors,
+                       "transport_alive": protocol.transport_alive,
+                       "transport_loss": protocol.transport_loss} if protocol else
                       {"status": "unavailable", "received": 0, "rejected_frames": 0,
                        "processed": 0, "queue_depth": 0, "queue_capacity": 0,
-                       "dropped_frames": 0, "processing_errors": 0})
+                       "dropped_frames": 0, "processing_errors": 0,
+                       "transport_alive": False, "transport_loss": None})
         persistence_health = persistence.health() if persistence else {"status": "disabled"}
         weather_status = ("unknown" if service.weather_available is None else
                           "healthy" if service.weather_available else "degraded")
@@ -120,8 +123,10 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
             "synthetic_input": service.synthetic_input,
             "synthetic_prediction": getattr(service.model, "source", "unknown").startswith("synthetic"),
             "udp": udp_health,
+            "state_capacity": service.grid.health() | service.state_health(),
             "persistence": persistence_health,
-            "weather": {"status": weather_status, "failures": service.weather_failures},
+            "weather": {"status": weather_status, "failures": service.weather_failures,
+                        **(service.weather.health() if hasattr(service.weather, "health") else {})},
         }
         return JSONResponse(status_code=503 if overall == "unavailable" else 200, content=payload)
 
@@ -161,3 +166,4 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
             service.unsubscribe(queue)
 
     return app
+
