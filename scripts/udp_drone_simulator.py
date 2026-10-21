@@ -2,8 +2,8 @@
 import argparse
 import random
 import socket
-import time
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -12,8 +12,22 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from backend.telemetry.protocol import TelemetryFrame, encode_frame
 
 
+def build_frame(sequence: int, rng: random.Random) -> bytes:
+    frame = TelemetryFrame(
+        drone_id=1,
+        sequence=sequence % 65536,
+        timestamp=int(time.time()),
+        latitude=18.5204 + rng.uniform(-0.0001, 0.0001),
+        longitude=73.8567 + rng.uniform(-0.0001, 0.0001),
+        sensors=tuple(rng.randint(100, 2000) for _ in range(6)),
+    )
+    return encode_frame(frame)
+
+
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Simulate a lossy, duplicated and reordered UDP drone link."
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9999)
     parser.add_argument("--count", type=int, default=100)
@@ -21,60 +35,92 @@ def main():
     parser.add_argument("--duplicate", type=float, default=0.10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--interval", type=float, default=0.02)
+    parser.add_argument("--batch-size", type=int, default=5)
     args = parser.parse_args()
 
-    if not 0 <= args.loss <= 1:
-        parser.error("--loss must be between 0 and 1")
-    if not 0 <= args.duplicate <= 1:
-        parser.error("--duplicate must be between 0 and 1")
-    if args.count < 1 or args.interval < 0:
-        parser.error("count must be positive and interval non-negative")
+    if args.count < 1:
+        parser.error("--count must be at least 1")
+    if not 0 <= args.loss <= 1 or not 0 <= args.duplicate <= 1:
+        parser.error("--loss and --duplicate must be between 0 and 1")
+    if args.interval < 0 or args.batch_size < 2:
+        parser.error("--interval must be non-negative and batch-size at least 2")
 
     rng = random.Random(args.seed)
-    rng_network = random.Random(args.seed + 1)
+    network_rng = random.Random(args.seed + 1)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    sent = dropped = duplicated = 0
-    started = time.time()
+    dropped = duplicated = 0
+    sent = 0
+    out_of_order_transmissions = 0
+    previous_sequence = None
+    start = time.monotonic()
 
     try:
-        for seq in range(args.count):
-            frame = TelemetryFrame(
-                drone_id=1,
-                sequence=seq % 65536,
-                timestamp=int(time.time()),
-                latitude=18.5204 + rng.uniform(-0.0001, 0.0001),
-                longitude=73.8567 + rng.uniform(-0.0001, 0.0001),
-                sensors=tuple(rng.randint(100, 2000) for _ in range(6)),
+        # Send the first frame as a stream-start anchor. The receiver needs
+        # an initial sequence before it can distinguish late from future data.
+        first = build_frame(0, rng)
+        sock.sendto(first, (args.host, args.port))
+        sent += 1
+        previous_sequence = 0
+
+        # Apply impairment to the remaining frames.
+        for batch_start in range(1, args.count, args.batch_size):
+            batch = []
+
+            batch_end = min(
+                batch_start + args.batch_size,
+                args.count,
             )
-            packet = encode_frame(frame)
 
-            if rng_network.random() < args.loss:
-                dropped += 1
-                continue
+            for sequence in range(batch_start, batch_end):
+                packet = build_frame(sequence, rng)
 
-            sock.sendto(packet, (args.host, args.port))
-            sent += 1
+                if network_rng.random() < args.loss:
+                    dropped += 1
+                    continue
 
-            if rng_network.random() < args.duplicate:
+                batch.append((sequence, packet, False))
+
+                if network_rng.random() < args.duplicate:
+                    batch.append((sequence, packet, True))
+                    duplicated += 1
+
+            # Shuffle each batch to simulate datagrams arriving out of order.
+            network_rng.shuffle(batch)
+
+            for sequence, packet, is_duplicate in batch:
+                if (
+                    previous_sequence is not None
+                    and sequence < previous_sequence
+                ):
+                    out_of_order_transmissions += 1
+
                 sock.sendto(packet, (args.host, args.port))
-                duplicated += 1
                 sent += 1
+                previous_sequence = sequence
 
-            if args.interval:
-                time.sleep(args.interval)
+                if args.interval:
+                    time.sleep(args.interval)
 
     finally:
         sock.close()
 
-    print(f"Original frames generated: {args.count}")
-    print(f"Datagrams sent:            {sent}")
-    print(f"Original frames dropped:   {dropped}")
-    print(f"Duplicate datagrams sent:  {duplicated}")
-    print(f"Configured loss rate:      {args.loss:.0%}")
-    print(f"Configured duplication:    {args.duplicate:.0%}")
-    print(f"Elapsed seconds:            {time.time() - started:.2f}")
-    print("Note: This simulator does not yet implement packet reordering.")
+    impaired_originals = max(0, args.count - 1)
+
+    print(f"Original frames generated:       {args.count}")
+    print(f"Datagrams sent:                  {sent}")
+    print(f"Original frames dropped:         {dropped}")
+    print(f"Duplicate datagrams sent:        {duplicated}")
+    print(f"Out-of-order transmissions:      {out_of_order_transmissions}")
+    print(f"Configured loss rate:            {args.loss:.0%}")
+    print(f"Configured duplication rate:     {args.duplicate:.0%}")
+    if impaired_originals:
+        print(
+            "Observed loss among impaired originals: "
+            f"{dropped / impaired_originals:.1%}"
+        )
+    print(f"Random seed:                     {args.seed}")
+    print(f"Elapsed seconds:                 {time.monotonic() - start:.2f}")
 
 
 if __name__ == "__main__":

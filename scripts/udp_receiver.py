@@ -14,68 +14,72 @@ HOST = "127.0.0.1"
 PORT = 9999
 
 
+def display_frame(frame, processed_count):
+    print(
+        f"Processed={processed_count} "
+        f"Drone={frame.drone_id} "
+        f"Seq={frame.sequence} "
+        f"Lat={frame.latitude:.6f} "
+        f"Lon={frame.longitude:.6f} "
+        f"Sensors={frame.sensors}"
+    )
+
+
 def main():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((HOST, PORT))
-    sock.settimeout(0.1)
-
     reorder = ReorderBuffer(window_seconds=2.0)
+    received = rejected = processed = 0
 
-    accepted = rejected = processed = 0
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((HOST, PORT))
+        sock.settimeout(0.1)
 
-    print(f"Listening on {HOST}:{PORT}")
-    print("CRC validation and per-drone reorder buffer enabled.")
+        print(f"Listening on {HOST}:{PORT}")
+        print("Binary protocol, CRC16 validation and reorder buffer enabled.")
+        print("Press Ctrl+C to stop.")
 
-    try:
-        while True:
-            try:
-                data, address = sock.recvfrom(2048)
-            except socket.timeout:
-                for ready in reorder.flush_expired():
+        try:
+            while True:
+                try:
+                    data, address = sock.recvfrom(2048)
+                except socket.timeout:
+                    ready = reorder.flush_expired()
+                    for frame in ready:
+                        processed += 1
+                        display_frame(frame, processed)
+                    continue
+
+                received += 1
+
+                try:
+                    frame = decode_frame(data)
+                except ValueError as exc:
+                    rejected += 1
+                    print(f"Rejected datagram from {address}: {exc}")
+                    continue
+
+                for ready in reorder.push(frame):
                     processed += 1
-                    print(
-                        f"Processed={processed} "
-                        f"Drone={ready.drone_id} "
-                        f"Seq={ready.sequence} "
-                        f"Lat={ready.latitude:.6f} "
-                        f"Lon={ready.longitude:.6f} "
-                        f"Sensors={ready.sensors}"
-                    )
-                continue    
+                    display_frame(ready, processed)
 
-            received_at = time.monotonic()
+        except KeyboardInterrupt:
+            deadline = time.monotonic() + reorder.window_seconds
 
-            try:
-                frame = decode_frame(data)
-            except ValueError as exc:
-                rejected += 1
-                print(f"Rejected packet from {address}: {exc}")
-                continue
+            while time.monotonic() < deadline:
+                for frame in reorder.flush_expired():
+                    processed += 1
+                    display_frame(frame, processed)
 
-            accepted += 1
+                time.sleep(0.05)
 
-            ready_frames = reorder.push(frame, now=received_at)
-
-            for ready in ready_frames:
-                processed += 1
-                print(
-                    f"Processed={processed} "
-                    f"Drone={ready.drone_id} "
-                    f"Seq={ready.sequence} "
-                    f"Lat={ready.latitude:.6f} "
-                    f"Lon={ready.longitude:.6f} "
-                    f"Sensors={ready.sensors}"
-                )
-
-    except KeyboardInterrupt:
-        print("\nReceiver stopped.")
-        print(f"Valid packets received: {accepted}")
-        print(f"Rejected packets:       {rejected}")
-        print(f"Frames processed:       {processed}")
-        print(f"Duplicates suppressed:  {reorder.duplicates}")
-        print(f"Late frames rejected:   {reorder.late_frames}")
-    finally:
-        sock.close()
+        finally:
+            print("\n--- Receiver statistics ---")
+            print(f"Datagrams received:        {received}")
+            print(f"Invalid frames rejected:   {rejected}")
+            print(f"Frames processed:          {processed}")
+            print(f"Duplicates suppressed:     {reorder.duplicates}")
+            print(f"Late frames rejected:      {reorder.late_frames}")
+            print(f"Out-of-order arrivals:     {reorder.reordered_frames}")
 
 
 if __name__ == "__main__":
