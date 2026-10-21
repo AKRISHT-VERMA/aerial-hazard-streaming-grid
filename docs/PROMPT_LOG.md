@@ -63,7 +63,7 @@ failure health counters; partial-startup cleanup; reject CRC-valid packets
 with out-of-range coordinates; validate SVM feature metadata/probabilities and
 acknowledgement identities; restrict the supplied HTTP runner to loopback;
 document finite retry behavior and unauthenticated UDP; add integration and
-failure-path tests.
+failure-path tests; move the HTTP test client to test-only requirements.
 
 Validation:
 - `python -m unittest discover -v`: 55 tests passed after audit changes.

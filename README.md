@@ -123,9 +123,10 @@ trusted senders. Never expose either port directly to the public internet.
 
 ## Tests and checks
 
-Run the dependency-free suite with:
+Install the test dependencies and run the complete suite with:
 
 ```powershell
+python -m pip install -r requirements-test.txt
 python -m unittest discover -v
 ```
 
@@ -133,7 +134,7 @@ The tests cover the wire protocol, sequence reordering, grid aggregation and
 staleness, feature validation, alert transitions, bounded queue behavior,
 writer shutdown after a database outage, and loopback UDP-to-live-state
 integration. PostgreSQL service integration and browser rendering checks
-require their optional runtime dependencies and services. Run the demo with
-Python 3.10+ and `python -m pip install -r requirements.txt`; optional SVM and
-PostgreSQL dependencies are listed separately in `requirements-model.txt` and
-`requirements-postgres.txt`.
+require their optional runtime dependencies and services. The server uses
+`requirements.txt`; test-only HTTP client dependencies are in
+`requirements-test.txt`. Optional SVM and PostgreSQL dependencies are listed
+separately in `requirements-model.txt` and `requirements-postgres.txt`.
