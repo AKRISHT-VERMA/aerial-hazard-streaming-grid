@@ -50,6 +50,13 @@ Settings are environment variables; the runner does not automatically load
 | `HAZARD_HTTP_PORT` | `8000` | Dashboard and API port. |
 | `HAZARD_UDP_HOST` | `127.0.0.1` | UDP telemetry bind address. |
 | `HAZARD_UDP_PORT` | `9999` | UDP telemetry port. |
+| `HAZARD_GRID_MAX_CELLS` | `10000` | Maximum live grid cells. At capacity, oldest stale unalerted cells are evicted first; otherwise a new frame is dropped and counted. |
+| `HAZARD_CELL_RETENTION_SECONDS` | `300` | Retain cells/readings for up to five minutes without newer telemetry; active-alert cells remain pinned. |
+| `HAZARD_GRID_MAX_DRONES_PER_CELL` | `256` | Maximum distinct drone readings retained per cell (protocol maximum is 256). Expired readings are removed first; otherwise updates are dropped and counted. |
+| `HAZARD_PREDICTION_MAX_ENTRIES` | `10000` | Maximum retained predictions; default is the grid capacity. |
+| `HAZARD_PREDICTION_RETENTION_SECONDS` | `300` | Expire predictions after five minutes without a newer score; predictions associated with active alerts are retained. |
+| `HAZARD_WEATHER_CACHE_SECONDS` | `60` | Weather cache entry lifetime. |
+| `HAZARD_WEATHER_CACHE_MAX_ENTRIES` | `1024` | Maximum live weather cache entries; least-recently-used entries are evicted when full. |
 | `HAZARD_TELEMETRY_SOURCE` | live | Set to `demo` to label simulator input synthetic. |
 | `HAZARD_WEATHER_SOURCE` | live | Set to `demo` for fixed synthetic weather. |
 | `HAZARD_MODEL_PATH` | unset | Trusted joblib pipeline; unset selects the synthetic demo scorer. |
@@ -88,7 +95,9 @@ is retrying; retry limits bound that delay.
 - `GET /health`: overall `healthy`, `degraded`, or `unavailable` status plus
   component details. Intentionally disabled PostgreSQL reports `disabled` and
   does not make an otherwise healthy demo degraded. UDP drops/errors, weather
-  outages, queue saturation, and abandoned database batches are reported.
+  outages, queue saturation, abandoned database batches, grid/prediction
+  capacity, evictions, and dropped updates are reported. An unexpectedly lost
+  UDP transport makes health unavailable and returns HTTP 503.
 - `GET /api/cells`: current in-memory cells, readings, confidence and stale flags.
 - `GET /api/alerts`: active alerts.
 - `POST /api/alerts/{alert_id}/acknowledge`: acknowledge an alert with
@@ -105,6 +114,16 @@ For remote access, put it behind an authenticated, TLS-terminating gateway
 and keep the app port inaccessible from untrusted networks. The UDP ingest
 protocol itself has no authentication; restrict its network access to
 trusted senders. Never expose either port directly to the public internet.
+
+The live grid, per-cell drone readings, prediction history, and weather cache
+have explicit limits. At grid capacity, stale cells without active alerts are
+evicted before fresh or alert-pinned cells; if no safe cell can be evicted, the
+incoming frame is dropped and `/health` increments `state_capacity.dropped_updates`.
+Active alert state is retained and pins its grid cell. Predictions age out after
+their configured retention interval unless tied to an active alert; prediction
+capacity pressure is counted separately. Weather entries expire by TTL and the
+least-recently-used entry is evicted at capacity. These defaults bound memory
+for the demo; they are not a production workload sizing or load-test guarantee.
 
 ## Troubleshooting
 
@@ -147,3 +166,4 @@ The server uses
 `requirements.txt`; test-only HTTP client dependencies are in
 `requirements-test.txt`. Optional SVM and PostgreSQL dependencies are listed
 separately in `requirements-model.txt` and `requirements-postgres.txt`.
+
