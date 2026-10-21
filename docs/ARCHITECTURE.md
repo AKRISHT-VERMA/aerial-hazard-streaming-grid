@@ -57,7 +57,8 @@ wire protocol, and grid API that are present here.
 ## Development and deployment boundaries
 
 - Use Python 3.10+ and `python -m unittest discover -v`.
-- FastAPI/Uvicorn, asyncpg and scikit-learn/joblib are optional dependencies.
+- FastAPI/Uvicorn and its WebSocket protocol implementation, asyncpg and
+  scikit-learn/joblib are optional dependencies.
 - `.github/workflows/ci.yml` runs unit and loopback integration checks, a real
   PostgreSQL 16 integration test, and a headless Chromium dashboard smoke test.
 - Use a trusted model artifact only; loading joblib can execute code.

@@ -114,9 +114,11 @@ Local validation:
   browser result is claimed locally. CI is configured to run both.
 
 Remaining verification:
-Wait for the GitHub Actions run on the updated branch to confirm the remote
-PostgreSQL and Chromium checks. No production readiness or safety certification
-is claimed.
+The first GitHub Actions run confirmed PostgreSQL schema/write/duplicate/
+acknowledgement/shutdown integration passed, while Chromium exposed that the
+runtime requirements did not include Uvicorn's WebSocket implementation. The
+runtime dependency is now declared; the next CI run must confirm the browser
+smoke path. No production readiness or safety certification is claimed.
 
 ## P02 - Complete the streaming pipeline
 
