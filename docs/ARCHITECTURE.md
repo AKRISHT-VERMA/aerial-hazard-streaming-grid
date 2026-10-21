@@ -31,6 +31,23 @@
    disabled, reports UDP drops/errors and weather outages as degradation, and
    marks exhausted or unavailable persistence accordingly.
 
+## Bounded state and UDP lifecycle
+
+The default live grid is limited to 10,000 cells, five minutes of cell and
+reading retention, and 256 drone IDs per cell. Expired/stale cells without an
+active alert are evicted oldest-first. Alerted cells remain pinned; when no
+safe cell is available, the new frame is rejected and `/health` reports the
+dropped-update counter. Prediction history is limited to the configured entry
+count (10,000 by default) and retention (five minutes); entries tied to active
+alerts are protected from expiry. The Open-Meteo cache has a 60-second TTL and
+a 1,024-entry LRU bound. `/health` exposes capacities, evictions, and drops.
+Environment overrides and defaults are listed in the README and `.env.example`.
+
+UDP transport loss cancels its reorder timer, wakes the listener task, drains
+the bounded processing queue, and records the transport as unavailable. A
+listener failure remains visible through `/health` with HTTP 503. Intentional
+application shutdown follows a separate cancellation and cleanup path.
+
 ## Feature schema
 
 `backend.risk.FEATURE_COLUMNS` defines the model contract. The columns are
@@ -70,3 +87,4 @@ wire protocol, and grid API that are present here.
   authentication and must be restricted to trusted senders.
 - Keep database credentials outside Git in environment variables or a secret
   manager; do not print connection strings or telemetry payloads to logs.
+
