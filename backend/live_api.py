@@ -103,6 +103,14 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
 
         udp_task = getattr(app.state, "udp_task", None)
         protocol = getattr(app.state, "udp_protocol", None) if udp_task else None
+        listener_failure = getattr(app.state, "udp_failure", None)
+        if udp_task is not None and udp_task.done() and not udp_task.cancelled():
+            try:
+                failure = udp_task.exception()
+            except asyncio.CancelledError:
+                failure = None
+            if failure is not None:
+                listener_failure = type(failure).__name__
         persistence = getattr(app.state, "persistence", None)
         udp_running = (protocol is not None and protocol.transport_alive
                        and udp_task is not None and not udp_task.done())
@@ -116,13 +124,13 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
                        "dropped_frames": protocol.queue_dropped,
                        "processing_errors": protocol.processing_errors,
                        "transport_alive": protocol.transport_alive,
-                       "listener_failure": getattr(app.state, "udp_failure", None),
+                       "listener_failure": listener_failure,
                        "transport_loss": protocol.transport_loss} if protocol else
                       {"status": "unavailable", "received": 0, "rejected_frames": 0,
                        "processed": 0, "queue_depth": 0, "queue_capacity": 0,
                        "dropped_frames": 0, "processing_errors": 0,
                        "transport_alive": False, "transport_loss": None,
-                       "listener_failure": getattr(app.state, "udp_failure", None)})
+                       "listener_failure": listener_failure})
         persistence_health = persistence.health() if persistence else {"status": "disabled"}
         weather_status = ("unknown" if service.weather_available is None else
                           "healthy" if service.weather_available else "degraded")
