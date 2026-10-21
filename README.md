@@ -53,11 +53,14 @@ artifact is not assumed to be safety-validated.
 Install `requirements-postgres.txt`, set `DATABASE_URL` in the process
 environment, and start the server. The service creates its two tables when it
 connects. Sensor writes use a bounded asynchronous batch queue with retries;
-queue saturation is surfaced as an ingest error instead of silently dropping
-history. Alert acknowledgements are written synchronously before the API
-confirms them. Keep credentials in environment variables or a secret manager;
-never commit a populated `.env` file. `backend/migrations/001_initial.sql`
-contains the schema for managed deployments.
+after five retries a failed batch is abandoned with explicit error counters in
+`/health` (the live in-memory grid continues). Queue saturation is surfaced as
+an ingest error instead of silently dropping history. Alert acknowledgements
+are written synchronously before the API confirms them. Keep credentials in
+environment variables or a secret manager; never commit a populated `.env`
+file. `backend/migrations/001_initial.sql` contains the schema for managed
+deployments. Shutdown drains the queue, so it can take time while the database
+is retrying; retry limits bound that delay.
 
 ## Endpoints
 
@@ -71,9 +74,13 @@ contains the schema for managed deployments.
 
 The map API reads only in-memory state; historical database queries are not
 used to render live cells. The development server binds to loopback by
-default. It has no built-in user authentication; keep it on a trusted local
-network or put it behind an authenticated, TLS-terminating gateway before
-sharing it. Do not expose it directly to the public internet.
+  default. `/health` includes UDP queue capacity/drop/error counters and
+  PostgreSQL queue/failure counters when enabled. HTTP has no built-in user
+  authentication, and the supplied runner refuses non-loopback HTTP binds.
+  For remote access, put it behind an authenticated, TLS-terminating gateway
+  and keep the app port inaccessible from untrusted networks. The UDP ingest
+  protocol itself has no authentication; restrict its network access to
+  trusted senders. Never expose either port directly to the public internet.
 
 ## Tests and checks
 
@@ -84,6 +91,10 @@ python -m unittest discover -v
 ```
 
 The tests cover the wire protocol, sequence reordering, grid aggregation and
-staleness, feature validation, alert transitions, the asynchronous writer
-queue, and a loopback UDP-to-live-state integration path. PostgreSQL and
-browser checks require their optional runtime dependencies and services.
+staleness, feature validation, alert transitions, bounded queue behavior,
+writer shutdown after a database outage, and loopback UDP-to-live-state
+integration. PostgreSQL service integration and browser rendering checks
+require their optional runtime dependencies and services. Run the demo with
+Python 3.10+ and `python -m pip install -r requirements.txt`; optional SVM and
+PostgreSQL dependencies are listed separately in `requirements-model.txt` and
+`requirements-postgres.txt`.

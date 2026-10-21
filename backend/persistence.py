@@ -19,13 +19,18 @@ class AsyncPostgresStore:
     """Bounded asyncpg writer. Install the optional ``postgres`` extra to use."""
 
     def __init__(self, pool: Any, *, queue_size: int = 1000,
-                 batch_size: int = 100, flush_interval: float = 0.25) -> None:
-        if queue_size < 1 or batch_size < 1 or flush_interval <= 0:
+                 batch_size: int = 100, flush_interval: float = 0.25,
+                 max_retries: int = 5) -> None:
+        if queue_size < 1 or batch_size < 1 or flush_interval <= 0 or max_retries < 0:
             raise ValueError("queue, batch, and flush interval must be positive")
         self.pool = pool
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=queue_size)
         self.batch_size = batch_size
         self.flush_interval = flush_interval
+        self.max_retries = max_retries
+        self.failed_batches = 0
+        self.failed_readings = 0
+        self.last_error: str | None = None
         self.worker: asyncio.Task | None = None
         self._closed = False
 
@@ -37,33 +42,37 @@ class AsyncPostgresStore:
             raise RuntimeError("Install the 'postgres' extra to use PostgreSQL") from exc
         pool = await asyncpg.create_pool(dsn=dsn)
         store = cls(pool, **options)
-        async with pool.acquire() as connection:
-            await connection.execute(
-                """CREATE TABLE IF NOT EXISTS hazard_readings (
-                    drone_id SMALLINT NOT NULL, sequence INTEGER NOT NULL,
-                    observed_at TIMESTAMPTZ NOT NULL, latitude DOUBLE PRECISION NOT NULL,
-                    longitude DOUBLE PRECISION NOT NULL, sensors JSONB NOT NULL,
-                    cell_x INTEGER NOT NULL, cell_y INTEGER NOT NULL,
-                    risk DOUBLE PRECISION NOT NULL, risk_label TEXT NOT NULL,
-                    prediction_source TEXT NOT NULL, synthetic_prediction BOOLEAN NOT NULL,
-                    weather JSONB NOT NULL,
-                    PRIMARY KEY (drone_id, sequence, observed_at)
-                )"""
-            )
-            await connection.execute(
-                "CREATE INDEX IF NOT EXISTS hazard_readings_observed_at_idx "
-                "ON hazard_readings (observed_at DESC)"
-            )
-            await connection.execute(
-                "CREATE INDEX IF NOT EXISTS hazard_readings_cell_idx "
-                "ON hazard_readings (cell_x, cell_y, observed_at DESC)"
-            )
-            await connection.execute(
-                """CREATE TABLE IF NOT EXISTS alert_acknowledgements (
-                    alert_id UUID PRIMARY KEY, cell_x INTEGER NOT NULL, cell_y INTEGER NOT NULL,
-                    acknowledged_by TEXT NOT NULL, acknowledged_at TIMESTAMPTZ NOT NULL
-                )"""
-            )
+        try:
+            async with pool.acquire() as connection:
+                await connection.execute(
+                    """CREATE TABLE IF NOT EXISTS hazard_readings (
+                        drone_id SMALLINT NOT NULL, sequence INTEGER NOT NULL,
+                        observed_at TIMESTAMPTZ NOT NULL, latitude DOUBLE PRECISION NOT NULL,
+                        longitude DOUBLE PRECISION NOT NULL, sensors JSONB NOT NULL,
+                        cell_x INTEGER NOT NULL, cell_y INTEGER NOT NULL,
+                        risk DOUBLE PRECISION NOT NULL, risk_label TEXT NOT NULL,
+                        prediction_source TEXT NOT NULL, synthetic_prediction BOOLEAN NOT NULL,
+                        weather JSONB NOT NULL,
+                        PRIMARY KEY (drone_id, sequence, observed_at)
+                    )"""
+                )
+                await connection.execute(
+                    "CREATE INDEX IF NOT EXISTS hazard_readings_observed_at_idx "
+                    "ON hazard_readings (observed_at DESC)"
+                )
+                await connection.execute(
+                    "CREATE INDEX IF NOT EXISTS hazard_readings_cell_idx "
+                    "ON hazard_readings (cell_x, cell_y, observed_at DESC)"
+                )
+                await connection.execute(
+                    """CREATE TABLE IF NOT EXISTS alert_acknowledgements (
+                        alert_id UUID PRIMARY KEY, cell_x INTEGER NOT NULL, cell_y INTEGER NOT NULL,
+                        acknowledged_by TEXT NOT NULL, acknowledged_at TIMESTAMPTZ NOT NULL
+                    )"""
+                )
+        except BaseException:
+            await pool.close()
+            raise
         store.worker = asyncio.create_task(store._run(), name="hazard-postgres-writer")
         return store
 
@@ -116,6 +125,7 @@ class AsyncPostgresStore:
                 batch.append(item)
             rows = [self._reading_row(frame, result) for frame, result in batch]
             delay = 0.25
+            attempt = 0
             while True:
                 try:
                     async with self.pool.acquire() as connection:
@@ -132,11 +142,18 @@ class AsyncPostgresStore:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    # Keep the batch accounted for and retry; never silently
-                    # discard readings during a temporary database outage.
-                    logger.warning("PostgreSQL batch write failed (%s); retrying", type(exc).__name__)
+                    if attempt >= self.max_retries:
+                        self.failed_batches += 1
+                        self.failed_readings += len(batch)
+                        self.last_error = type(exc).__name__
+                        logger.error("PostgreSQL batch abandoned after %d retries (%s); %d readings were not persisted",
+                                     attempt, self.last_error, len(batch))
+                        break
+                    logger.warning("PostgreSQL batch write failed (%s); retry %d/%d",
+                                   type(exc).__name__, attempt + 1, self.max_retries)
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 10.0)
+                    attempt += 1
             for _ in batch:
                 self.queue.task_done()
             if stopping:
@@ -161,3 +178,8 @@ class AsyncPostgresStore:
             await self.queue.put(None)
             await self.worker
         await self.pool.close()
+
+    def health(self) -> dict[str, int | str | None]:
+        return {"queue_depth": self.queue.qsize(), "queue_capacity": self.queue.maxsize,
+                "failed_batches": self.failed_batches, "failed_readings": self.failed_readings,
+                "last_error": self.last_error}

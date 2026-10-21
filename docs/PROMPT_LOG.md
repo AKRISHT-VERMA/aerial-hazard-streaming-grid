@@ -37,6 +37,52 @@ For each prompt, record:
 - Tests executed and actual results
 - Follow-up fixes and remaining limitations
 
+## P03 - End-to-end engineering audit
+
+Objective:
+Audit the complete PR pipeline, fix verified reliability/security/validation
+issues, test actual component integrations, update operator documentation, and
+leave the PR as a draft.
+
+Prompt:
+Perform a rigorous end-to-end engineering audit of this repository and draft
+PR #1, “Complete the aerial hazard streaming pipeline.” Inspect the
+implementation, tests, dependencies, configuration, and documentation before
+changing code. Trace UDP reception through CRC, sequence ordering, spatial
+updates, features, prediction, alerts, persistence, API, WebSocket, and
+dashboard. Fix integration and lifecycle bugs; test malformed and stale data,
+bounded background work, alert transitions, recovery and synthetic labeling.
+Review security and deployment defaults, update setup/troubleshooting docs,
+run all configured checks, record exact results and remaining external
+verification needs, commit to the PR branch, and keep it in draft without
+merging.
+
+Files changed:
+Bounded and instrumented UDP processing queue; bounded PostgreSQL retries and
+failure health counters; partial-startup cleanup; reject CRC-valid packets
+with out-of-range coordinates; validate SVM feature metadata/probabilities and
+acknowledgement identities; restrict the supplied HTTP runner to loopback;
+document finite retry behavior and unauthenticated UDP; add integration and
+failure-path tests.
+
+Validation:
+- `python -m unittest discover -v`: 54 tests passed after audit changes.
+- `python -m compileall -q .`: passed.
+- `python scripts/run_server.py --help`: passed.
+- `python scripts/run_server.py --host 0.0.0.0 --port 8000`: rejected as
+  expected; the supplied runner limits HTTP to loopback.
+- No configured lint or static type checker was found. PostgreSQL, live
+  Open-Meteo, browser rendering, and a trusted trained SVM were not available
+  for production integration validation.
+
+Remaining limitations:
+No trained data or safety-validated artifact is included. PostgreSQL retry
+exhaustion reports and abandons the affected in-memory batch; an operator must
+monitor `/health` and restore DB connectivity. UDP is unauthenticated and must
+be firewalled to trusted sources. HTTP has no app authentication; remote use
+requires an authenticated TLS gateway. No production safety certification is
+claimed.
+
 ## P02 - Complete the streaming pipeline
 
 Objective:
@@ -67,4 +113,3 @@ were not available for external integration testing. No trained model or
 training dataset is present; demo scoring is synthetic and not safety
 validated. The dashboard has no built-in authentication and is loopback-only
 by default.
-

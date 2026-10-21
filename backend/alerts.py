@@ -78,12 +78,15 @@ class AlertManager:
             return current
 
     def acknowledge(self, alert_id: str, user: str) -> HazardAlert:
-        if not user or not user.strip():
-            raise ValueError("acknowledging user is required")
+        if not isinstance(user, str) or not user.strip():
+            raise ValueError("acknowledging user must be a non-empty string")
+        user = user.strip()
+        if len(user) > 128 or any(ord(character) < 32 for character in user):
+            raise ValueError("acknowledging user must be at most 128 printable characters")
         with self._lock:
             for alert in self._alerts.values():
                 if alert.alert_id == alert_id:
-                    alert.acknowledged_by = user.strip()
+                    alert.acknowledged_by = user
                     alert.acknowledged_at = self.clock()
                     return alert
         raise KeyError(f"Active alert not found: {alert_id}")

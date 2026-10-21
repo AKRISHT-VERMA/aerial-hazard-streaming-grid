@@ -7,15 +7,19 @@ from backend.telemetry.protocol import TelemetryFrame
 
 
 class FakePool:
-    def __init__(self):
+    def __init__(self, failures=0):
         self.rows = []
         self.closed = False
+        self.failures = failures
 
     @asynccontextmanager
     async def acquire(self):
         yield self
 
     async def executemany(self, query, rows):
+        if self.failures:
+            self.failures -= 1
+            raise OSError("database unavailable")
         self.rows.extend(rows)
 
     async def close(self):
@@ -43,6 +47,21 @@ class TestPostgresWriter(unittest.IsolatedAsyncioTestCase):
         store.enqueue_reading(frame, {"cell_id": [0, 0]})
         with self.assertRaises(PersistenceQueueFull):
             store.enqueue_reading(frame, {"cell_id": [0, 0]})
+
+    async def test_permanent_database_failure_is_bounded_and_shutdown_completes(self):
+        pool = FakePool(failures=10)
+        store = AsyncPostgresStore(pool, queue_size=2, batch_size=1,
+                                   flush_interval=.001, max_retries=1)
+        store.worker = asyncio.create_task(store._run())
+        frame = TelemetryFrame(1, 2, 100, 18.5, 73.8, (1, 2, 3, 4, 5, 6))
+        store.enqueue_reading(frame, {"cell_id": [0, 1], "risk": .2, "risk_label": "low",
+                                      "prediction_source": "demo", "synthetic_prediction": True,
+                                      "weather": {}})
+        await asyncio.wait_for(store.close(), timeout=1)
+        self.assertTrue(pool.closed)
+        self.assertEqual(store.failed_batches, 1)
+        self.assertEqual(store.failed_readings, 1)
+        self.assertEqual(store.last_error, "OSError")
 
 
 if __name__ == "__main__":

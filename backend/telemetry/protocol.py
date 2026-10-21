@@ -95,6 +95,10 @@ def decode_frame(data: bytes) -> TelemetryFrame:
         raise ValueError("CRC16 checksum mismatch")
 
     fields = struct.unpack(">BHIii6H", payload)
+    if not -90_000_000 <= fields[3] <= 90_000_000:
+        raise ValueError("Latitude out of range")
+    if not -180_000_000 <= fields[4] <= 180_000_000:
+        raise ValueError("Longitude out of range")
 
     return TelemetryFrame(
         drone_id=fields[0],

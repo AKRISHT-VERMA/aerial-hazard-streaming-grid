@@ -23,8 +23,10 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
     @asynccontextmanager
     async def lifespan(app):
         app.state.udp_task = None
+        app.state.udp_protocol = None
         app.state.freshness_task = None
         app.state.persistence = None
+        app.state.udp_protocol = None
         dsn = database_url if database_url is not None else os.environ.get("DATABASE_URL")
         if dsn:
             from backend.persistence import AsyncPostgresStore
@@ -32,9 +34,25 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
             app.state.persistence = store
             service.persistence = store
         from backend.udp import receive_udp
+        protocol_ready = asyncio.get_running_loop().create_future()
         app.state.udp_task = asyncio.create_task(
-            receive_udp(service, udp_host, udp_port), name="hazard-udp-listener"
+            receive_udp(service, udp_host, udp_port, protocol_ready), name="hazard-udp-listener"
         )
+        done, _ = await asyncio.wait((protocol_ready, app.state.udp_task),
+                                      return_when=asyncio.FIRST_COMPLETED)
+        if app.state.udp_task in done:
+            try:
+                await app.state.udp_task
+            finally:
+                if app.state.persistence is not None:
+                    await app.state.persistence.close()
+                    service.persistence = None
+        try:
+            app.state.udp_protocol = protocol_ready.result()
+        except BaseException:
+            app.state.udp_task.cancel()
+            await asyncio.gather(app.state.udp_task, return_exceptions=True)
+            raise
 
         async def publish_freshness():
             while True:
@@ -69,8 +87,19 @@ def create_app(service: HazardService, *, udp_host: str = "127.0.0.1",
 
     @app.get("/health")
     async def health():
+        udp_task = getattr(app.state, "udp_task", None)
+        protocol = getattr(app.state, "udp_protocol", None) if udp_task else None
+        persistence = getattr(app.state, "persistence", None)
+        persistence_health = persistence.health() if persistence else None
         return {"status": "ok", "revision": service.revision,
-                "synthetic_input": service.synthetic_input}
+                "synthetic_input": service.synthetic_input,
+                "synthetic_prediction": getattr(service.model, "source", "unknown").startswith("synthetic"),
+                "udp": ({"received": protocol.received, "rejected": protocol.rejected,
+                         "processed": protocol.processed, "queue_depth": protocol.processing_queue.qsize(),
+                         "queue_capacity": protocol.processing_queue.maxsize,
+                         "queue_dropped": protocol.queue_dropped,
+                         "processing_errors": protocol.processing_errors} if protocol else None),
+                "persistence": persistence_health}
 
     @app.get("/", include_in_schema=False)
     async def dashboard():

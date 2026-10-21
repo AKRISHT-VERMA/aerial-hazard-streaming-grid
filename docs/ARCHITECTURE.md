@@ -22,7 +22,8 @@
    hysteresis and acknowledgement. Escalating a warning to critical resets
    its acknowledgement.
 8. `backend.persistence` writes readings asynchronously in bounded batches
-   and retries database failures. Acknowledgements are written synchronously
+   with bounded retries; exhausted batches increment failure counters rather
+   than blocking shutdown forever. Acknowledgements are written synchronously
    before the API confirms them.
 9. `backend.live_api` serves a loopback dashboard, JSON cell/alert endpoints,
    health status and full-state WebSocket updates. Live map reads use only
@@ -59,7 +60,8 @@ wire protocol, and grid API that are present here.
 - The default scorer and simulator data are clearly marked synthetic. The
   repository is not safety-validated for industrial use.
 - The development HTTP server listens on loopback by default and has no
-  built-in authentication. Use a trusted network or an authenticated TLS
-  gateway before sharing it.
+  built-in authentication; the supplied runner rejects non-loopback HTTP
+  binds. Use an authenticated TLS gateway before sharing it. UDP has no
+  authentication and must be restricted to trusted senders.
 - Keep database credentials outside Git in environment variables or a secret
   manager; do not print connection strings or telemetry payloads to logs.

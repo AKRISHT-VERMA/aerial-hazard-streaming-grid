@@ -10,6 +10,16 @@ from backend.weather import DemoWeatherProvider
 
 
 class TestLiveUDPIntegration(unittest.IsolatedAsyncioTestCase):
+    async def test_processing_queue_is_bounded_and_counts_explicit_drops(self):
+        service = HazardService(StreamingHazardGrid(18.5204, 73.8567))
+        loop = asyncio.get_running_loop()
+        protocol = HazardDatagramProtocol(service, loop, processing_queue_size=2)
+        frame = TelemetryFrame(9, 1, 1_800_000_000, 18.5204, 73.8567, (1, 2, 3, 4, 5, 6))
+        protocol._process([frame, frame, frame])
+        self.assertEqual(protocol.processing_queue.maxsize, 2)
+        self.assertEqual(protocol.processing_queue.qsize(), 2)
+        self.assertEqual(protocol.queue_dropped, 1)
+
     async def test_udp_datagrams_reach_live_state_and_invalid_frames_are_counted(self):
         service = HazardService(
             StreamingHazardGrid(18.5204, 73.8567),

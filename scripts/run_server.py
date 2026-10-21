@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import os
 import sys
 from pathlib import Path
@@ -24,6 +25,14 @@ def main() -> None:
     parser.add_argument("--udp-host", default=os.getenv("HAZARD_UDP_HOST", "127.0.0.1"))
     parser.add_argument("--udp-port", type=int, default=int(os.getenv("HAZARD_UDP_PORT", "9999")))
     args = parser.parse_args()
+
+    http_host = args.host.strip().lower()
+    try:
+        is_loopback = ipaddress.ip_address(http_host).is_loopback
+    except ValueError:
+        is_loopback = http_host == "localhost"
+    if not is_loopback:
+        parser.error("HTTP must bind to loopback; use an authenticated TLS gateway for remote access")
 
     model_path = os.getenv("HAZARD_MODEL_PATH")
     model = SVMRiskModel(model_path) if model_path else DemoThresholdModel()

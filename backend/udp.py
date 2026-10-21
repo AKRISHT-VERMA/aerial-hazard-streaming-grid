@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 
 class HazardDatagramProtocol(asyncio.DatagramProtocol):
     def __init__(self, service: HazardService, loop: asyncio.AbstractEventLoop,
-                 reorder_window_seconds: float = 2.0) -> None:
+                 reorder_window_seconds: float = 2.0,
+                 processing_queue_size: int = 1024) -> None:
+        if processing_queue_size < 1:
+            raise ValueError("processing_queue_size must be positive")
         self.service = service
         self.loop = loop
         self.reorder = ReorderBuffer(window_seconds=reorder_window_seconds)
@@ -24,10 +27,14 @@ class HazardDatagramProtocol(asyncio.DatagramProtocol):
         self.rejected = 0
         self.processed = 0
         self._flush_handle: asyncio.TimerHandle | None = None
-        self._processing_tasks: set[asyncio.Task] = set()
+        self.processing_queue: asyncio.Queue = asyncio.Queue(maxsize=processing_queue_size)
+        self.queue_dropped = 0
+        self.processing_errors = 0
+        self._worker: asyncio.Task | None = None
 
     def connection_made(self, transport) -> None:
         self.transport = transport
+        self._worker = self.loop.create_task(self._run(), name="hazard-frame-worker")
         self._schedule_flush()
 
     def datagram_received(self, data: bytes, addr) -> None:
@@ -56,24 +63,39 @@ class HazardDatagramProtocol(asyncio.DatagramProtocol):
 
     def _process(self, frames) -> None:
         for frame in frames:
-            task = self.loop.create_task(self._process_one(frame))
-            self._processing_tasks.add(task)
-            task.add_done_callback(self._processing_tasks.discard)
+            try:
+                self.processing_queue.put_nowait(frame)
+            except asyncio.QueueFull:
+                self.queue_dropped += 1
+                logger.error("UDP processing queue full; frame dropped (total=%d)", self.queue_dropped)
+
+    async def _run(self) -> None:
+        while True:
+            frame = await self.processing_queue.get()
+            try:
+                if frame is None:
+                    return
+                await self._process_one(frame)
+            finally:
+                self.processing_queue.task_done()
 
     async def _process_one(self, frame) -> None:
         try:
             await self.service.process_frame(frame)
             self.processed += 1
         except Exception:
+            self.processing_errors += 1
             logger.exception("Failed to process a valid telemetry frame")
 
     async def drain(self) -> None:
-        if self._processing_tasks:
-            await asyncio.gather(*tuple(self._processing_tasks), return_exceptions=True)
+        await self.processing_queue.join()
+        if self._worker is not None and not self._worker.done():
+            await self.processing_queue.put(None)
+            await self._worker
 
 
 async def receive_udp(service: HazardService, host: str = "127.0.0.1",
-                      port: int = 9999) -> None:
+                      port: int = 9999, protocol_ready: asyncio.Future | None = None) -> None:
     if not 0 <= port <= 65535:
         raise ValueError("UDP port must be between 0 and 65535")
     loop = asyncio.get_running_loop()
@@ -82,6 +104,8 @@ async def receive_udp(service: HazardService, host: str = "127.0.0.1",
         local_addr=(host, port),
         family=socket.AF_INET6 if ":" in host else socket.AF_INET,
     )
+    if protocol_ready is not None and not protocol_ready.done():
+        protocol_ready.set_result(protocol)
     try:
         await asyncio.Future()
     finally:

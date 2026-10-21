@@ -38,9 +38,26 @@ class TestAlertManager(unittest.TestCase):
         alert = self.manager.observe((0, 0), self.prediction(.8))
         with self.assertRaises(ValueError):
             self.manager.acknowledge(alert.alert_id, " ")
+        with self.assertRaises(ValueError):
+            self.manager.acknowledge(alert.alert_id, 12)
+        with self.assertRaises(ValueError):
+            self.manager.acknowledge(alert.alert_id, "x" * 129)
 
 
 class TestHazardService(unittest.IsolatedAsyncioTestCase):
+    async def test_weather_failure_keeps_telemetry_live_with_missing_features(self):
+        class OfflineWeather:
+            def get(self, latitude, longitude):
+                raise OSError("offline")
+
+        service = HazardService(StreamingHazardGrid(18.5204, 73.8567), weather=OfflineWeather())
+        frame = TelemetryFrame(1, 2, 1_800_000_001, 18.5204, 73.8567,
+                               (100, 200, 300, 400, 500, 600))
+        result = await service.process_frame(frame)
+        self.assertEqual(result["weather"]["source"], "unavailable")
+        self.assertIsNone(result["weather"]["temperature"])
+        self.assertEqual(len(service.snapshot()["cells"]), 1)
+
     async def test_process_snapshot_labels_demo_scores_and_weather(self):
         service = HazardService(
             StreamingHazardGrid(18.5204, 73.8567),

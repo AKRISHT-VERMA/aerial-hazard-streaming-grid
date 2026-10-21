@@ -57,6 +57,8 @@ def feature_vector(features: dict[str, Any]) -> list[float]:
     ):
         if not isinstance(flags, (list, tuple)) or len(flags) != expected:
             raise ValueError(f"{name} has the wrong number of validity flags")
+        if any(flag not in (False, True, 0, 1) for flag in flags):
+            raise ValueError(f"{name} must contain only boolean or 0/1 flags")
     values = [*center, *center_valid, *adjacent, *adjacent_valid,
               *(0.0 if v is None else v for v in weather), *weather_valid]
     result = [float(value) for value in values]
@@ -101,6 +103,9 @@ class SVMRiskModel:
         self.model = joblib.load(path)
         if not callable(getattr(self.model, "predict", None)):
             raise ValueError("SVM artifact must expose predict()")
+        feature_count = getattr(self.model, "n_features_in_", FEATURE_COUNT)
+        if feature_count != FEATURE_COUNT:
+            raise ValueError(f"SVM artifact expects {feature_count} features; expected {FEATURE_COUNT}")
 
     def predict(self, features: dict[str, Any]) -> RiskPrediction:
         vector = feature_vector(features)
@@ -109,8 +114,14 @@ class SVMRiskModel:
             raise ValueError(f"Unsupported SVM risk label: {label}")
         probabilities = getattr(self.model, "predict_proba", None)
         if callable(probabilities):
-            classes = [str(value).lower() for value in self.model.classes_]
-            risk = float(probabilities([vector])[0][classes.index("high")]) if "high" in classes else float(label == "high")
+            raw_classes = getattr(self.model, "classes_", None)
+            if raw_classes is None:
+                raise ValueError("SVM predict_proba requires classes_")
+            classes = [str(value).lower() for value in raw_classes]
+            scores = list(probabilities([vector])[0])
+            if len(scores) != len(classes) or not all(math.isfinite(float(x)) for x in scores):
+                raise ValueError("SVM returned malformed class probabilities")
+            risk = float(scores[classes.index("high")]) if "high" in classes else float(label == "high")
         else:
             risk = {"low": 0.0, "medium": 0.5, "high": 1.0}[label]
         if not math.isfinite(risk) or not 0 <= risk <= 1:

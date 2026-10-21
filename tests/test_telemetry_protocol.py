@@ -1,5 +1,6 @@
 
 import unittest
+import struct
 
 from backend.telemetry.protocol import (
     FRAME_SIZE,
@@ -51,6 +52,12 @@ class TestTelemetryProtocol(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "CRC16"):
             decode_frame(bytes(encoded))
+
+    def test_crc_valid_frame_with_invalid_coordinates_is_rejected(self):
+        payload = struct.pack(">BHIii6H", 1, 1, 100, 91_000_000, 0, 1, 2, 3, 4, 5, 6)
+        packet = payload + struct.pack(">H", crc16_ccitt_false(payload))
+        with self.assertRaisesRegex(ValueError, "Latitude"):
+            decode_frame(packet)
 
     def test_truncated_frame_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "length"):
