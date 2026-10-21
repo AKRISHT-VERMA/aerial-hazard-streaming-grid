@@ -40,7 +40,6 @@ class TestDashboardBrowser(unittest.TestCase):
             cwd=root, env=env, stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        browser = None
         try:
             base_url = f"http://127.0.0.1:{http_port}"
             deadline = time.monotonic() + 20
@@ -56,33 +55,43 @@ class TestDashboardBrowser(unittest.TestCase):
 
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)
-                page = browser.new_page()
-                page.goto(base_url, wait_until="domcontentloaded")
-                self.assertIn("Aerial Hazard Streaming Grid", page.title())
-                self.assertIn("Waiting for telemetry", page.locator("#map").inner_text())
+                try:
+                    page = browser.new_page()
+                    page.goto(base_url, wait_until="domcontentloaded")
+                    self.assertIn("Aerial Hazard Streaming Grid", page.title())
+                    self.assertIn("Waiting for telemetry", page.locator("#map").inner_text())
+                    page.wait_for_function(
+                        "document.querySelector('#connection').textContent === 'Live'",
+                        timeout=10_000,
+                    )
 
-                frame = TelemetryFrame(9, 0, int(time.time()), 18.5204, 73.8567,
-                                       (2000, 1900, 1800, 1700, 1600, 1500))
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
-                    sender.sendto(encode_frame(frame), ("127.0.0.1", udp_port))
+                    frame = TelemetryFrame(9, 0, int(time.time()), 18.5204, 73.8567,
+                                           (2000, 1900, 1800, 1700, 1600, 1500))
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+                        sender.sendto(encode_frame(frame), ("127.0.0.1", udp_port))
 
-                page.locator("#cells tr").first.wait_for(timeout=10_000)
-                self.assertIn("SYNTHETIC INPUT", page.locator("#cells").inner_text())
-                self.assertIn("SYNTHETIC DEMO", page.locator("#cells").inner_text())
-                page.locator("#alerts tr").first.wait_for(timeout=10_000)
-                self.assertIn("SYNTHETIC DEMO", page.locator("#alerts").inner_text())
+                    page.wait_for_function(
+                        "async () => (await (await fetch('/health')).json()).udp.processed > 0",
+                        timeout=15_000,
+                    )
+                    page.wait_for_function(
+                        "document.querySelector('#cells tbody tr') !== null",
+                        timeout=10_000,
+                    )
+                    self.assertIn("SYNTHETIC INPUT", page.locator("#cells").inner_text())
+                    self.assertIn("SYNTHETIC DEMO", page.locator("#cells").inner_text())
+                    page.locator("#alerts tbody tr").first.wait_for(timeout=10_000)
+                    self.assertIn("SYNTHETIC DEMO", page.locator("#alerts").inner_text())
 
-                server.terminate()
-                server.wait(timeout=10)
-                page.wait_for_function(
-                    "document.querySelector('#connection').textContent === 'Reconnecting…'",
-                    timeout=8_000,
-                )
-                browser.close()
-                browser = None
+                    server.terminate()
+                    server.wait(timeout=10)
+                    page.wait_for_function(
+                        "document.querySelector('#connection').textContent === 'Reconnecting…'",
+                        timeout=8_000,
+                    )
+                finally:
+                    browser.close()
         finally:
-            if browser is not None:
-                browser.close()
             if server.poll() is None:
                 server.terminate()
                 server.wait(timeout=10)
