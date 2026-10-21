@@ -278,6 +278,14 @@ class StreamingHazardGrid:
             for index in range(SENSOR_COUNT)
         ]
 
+    def _sensor_validity(self, cells: list[HazardCell], now: float) -> list[bool]:
+        """Mark a sensor type valid when at least one weighted sample remains."""
+        weights = [0.0] * SENSOR_COUNT
+        for cell in cells:
+            for reading in cell.readings.values():
+                weights[reading.sensor_index] += self.confidence(reading, now)
+        return [weight > 0.0 for weight in weights]
+
     def fused_features(
         self,
         cell_id: tuple[int, int],
@@ -310,16 +318,24 @@ class StreamingHazardGrid:
 
         adjacent = self.neighbours(cell_id)
 
+        weather_values = [
+            weather_temperature,
+            weather_wind_speed,
+            weather_wind_direction,
+        ]
         return {
             "cell_id": list(cell_id),
             "center_sensor_values": self._aggregate_sensors([cell], now),
+            "center_sensor_validity": self._sensor_validity([cell], now),
             "neighbour_sensor_values": self._aggregate_sensors(
                 adjacent, now
             ),
+            "neighbour_sensor_validity": self._sensor_validity(adjacent, now),
             "neighbour_cell_count": len(adjacent),
             "weather_temperature": weather_temperature,
             "weather_wind_speed": weather_wind_speed,
             "weather_wind_direction": weather_wind_direction,
+            "weather_validity": [value is not None for value in weather_values],
         }
 
     def snapshot(
